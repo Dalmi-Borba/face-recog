@@ -2,10 +2,11 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import * as url from 'url';
+require('dotenv').config()
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 3000;
 
 const USERS_DIR = path.join(__dirname, 'users');
 if (!fs.existsSync(USERS_DIR)) fs.mkdirSync(USERS_DIR);
