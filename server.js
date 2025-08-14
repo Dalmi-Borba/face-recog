@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import * as url from 'url';
-require('dotenv').config()
+import dotenv from 'dotenv'
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const app = express();
