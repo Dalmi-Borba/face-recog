@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>Cadastro Facial (Webcam ou Upload)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- face-api: roda no browser, baixa modelos do CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,Segoe UI,Arial;margin:0;padding:24px;background:#0f172a;color:#e2e8f0}
+    .card{max-width:980px;margin:auto;background:#0b1220;border:1px solid #1f2a44;border-radius:16px;padding:20px}
+    h1{margin:0 0 8px}
+    p{opacity:.9;margin:0 0 12px}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .col{flex:1;min-width:280px}
+    input[type=text]{width:100%;padding:10px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#e2e8f0}
+    input[type=file]{padding:10px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#e2e8f0;width:100%}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #334155;background:#111827;color:#e2e8f0;cursor:pointer}
+    button.primary{background:#2563eb;border-color:#2563eb}
+    .tabs{display:flex;gap:8px;margin:12px 0}
+    .tab{padding:8px 12px;border:1px solid #334155;border-radius:999px;cursor:pointer;background:#111827}
+    .tab.active{background:#2563eb;border-color:#2563eb}
+    .panel{display:none}
+    .panel.active{display:block}
+    video,canvas{width:520px;max-width:100%;border-radius:12px;border:1px solid #1f2a44;background:#111827}
+    .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+    .chip{border:1px dashed #334155;border-radius:10px;padding:6px 10px;font-size:12px}
+    .ok{border-color:#22c55e;color:#22c55e}
+    .preview{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .preview img{width:100px;height:100px;object-fit:cover;border-radius:6px;border:1px solid #334155}
+    .muted{opacity:.75}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Cadastro de Reconhecimento Facial</h1>
+    <p>Escolha entre <b>Webcam</b> ou <b>Upload de fotos</b>. Iluminação frontal ajuda bastante. 2–5 poses ou fotos melhoram a acurácia.</p>
+
+    <div class="row" style="margin-top:12px">
+      <div class="col">
+        <label>Nome completo</label>
+        <input id="name" type="text" placeholder="Ex.: Ana Silva">
+        <div class="muted" style="margin-top:6px">
+          O nome será salvo em <code>users/[nome-slug]/</code> no servidor.
+        </div>
+      </div>
+      <div class="col">
+        <div class="tabs">
+          <div id="tab-webcam" class="tab active" onclick="switchTab('webcam')">Webcam</div>
+          <div id="tab-upload" class="tab" onclick="switchTab('upload')">Upload de fotos</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Painel: WEBCAM -->
+    <div id="panel-webcam" class="panel active">
+      <div class="row" style="margin-top:6px">
+        <div>
+          <video id="video" autoplay muted playsinline></video>
+          <div class="chips">
+            <span id="w1" class="chip">Frente</span>
+            <span id="w2" class="chip">Leve esquerda</span>
+            <span id="w3" class="chip">Leve direita</span>
+            <span id="w4" class="chip">Um pouco acima</span>
+            <span id="w5" class="chip">Um pouco abaixo</span>
+          </div>
+        </div>
+        <div class="col">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="capWebcam(1)">Capturar Frente</button>
+            <button onclick="capWebcam(2)">Capturar Esq.</button>
+            <button onclick="capWebcam(3)">Capturar Dir.</button>
+            <button onclick="capWebcam(4)">Capturar Cima</button>
+            <button onclick="capWebcam(5)">Capturar Baixo</button>
+          </div>
+          <div style="margin-top:12px">
+            <button class="primary" onclick="enviarCadastro()">Enviar cadastro</button>
+            <button onclick="limpar()">Limpar</button>
+          </div>
+          <div class="muted" style="margin-top:8px">Dica: aproxime o rosto ocupando boa parte do quadro e evite contraluz.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Painel: UPLOAD -->
+    <div id="panel-upload" class="panel">
+      <div class="row" style="margin-top:6px">
+        <div class="col">
+          <input id="fileInput" type="file" multiple accept="image/*">
+          <div id="preview" class="preview"></div>
+        </div>
+        <div class="col" style="display:flex; flex-direction:column; gap:8px">
+          <button onclick="processarUploads()">Processar fotos</button>
+          <button class="primary" onclick="enviarCadastro()">Enviar cadastro</button>
+          <button onclick="limpar()">Limpar</button>
+          <div class="muted">Selecione 1–10 fotos. Vamos extrair o vetor de cada foto com a IA no seu navegador.</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="msg" style="margin-top:12px;opacity:.9"></div>
+  </div>
+
+  <!-- canvas só para operações internas, não precisa aparecer -->
+  <canvas id="canvas" style="display:none"></canvas>
+
+  <script>
+    // ====== Config ======
+    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+    const MAX_UPLOADS = 10;
+
+    // ====== Refs ======
+    const nameInput = document.getElementById('name');
+    const msg = document.getElementById('msg');
+
+    // Webcam
+    const video = document.getElementById('video');
+    const wcChips = [null, ...[1,2,3,4,5].map(i => document.getElementById('w'+i))];
+    const wcDescriptors = {}; // idx -> vetor
+
+    // Upload
+    const fileInput = document.getElementById('fileInput');
+    const preview = document.getElementById('preview');
+    let upFiles = [];              // File[]
+    let upDescriptors = [];        // float[] por foto
+
+    // ====== Tabs ======
+    function switchTab(which) {
+      document.getElementById('tab-webcam').classList.toggle('active', which==='webcam');
+      document.getElementById('tab-upload').classList.toggle('active', which==='upload');
+      document.getElementById('panel-webcam').classList.toggle('active', which==='webcam');
+      document.getElementById('panel-upload').classList.toggle('active', which==='upload');
+      msg.textContent = '';
+    }
+
+    // ====== Boot (carregar modelos + webcam) ======
+    (async function boot(){
+      msg.textContent = 'Carregando modelos...';
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
+      msg.textContent = 'Modelos carregados. Webcam iniciando...';
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+        video.srcObject = stream;
+        await new Promise(r => video.onloadedmetadata = r);
+        msg.textContent = 'Pronto.';
+      } catch (e) {
+        msg.textContent = 'Sem webcam (ok se for usar upload): ' + e.message;
+      }
+    })().catch(e => { msg.textContent = 'Erro inicial: ' + e.message; });
+
+    // ====== Util ======
+    function ok(el){ el.classList.add('ok'); if(!el.textContent.includes('✔')) el.textContent += ' ✔'; }
+    function limpar() {
+      // webcam
+      for (const k of Object.keys(wcDescriptors)) delete wcDescriptors[k];
+      wcChips.slice(1).forEach(c => { c.classList.remove('ok'); c.textContent = c.textContent.replace(' ✔',''); });
+      // upload
+      upFiles = [];
+      upDescriptors = [];
+      preview.innerHTML = '';
+      if (fileInput) fileInput.value = '';
+      msg.textContent = 'Limpou buffers locais.';
+    }
+
+    async function getDescriptorFromVideo() {
+      const det = await faceapi
+        .detectSingleFace(video)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (!det) throw new Error('Rosto não detectado. Aproxime-se e ajuste luz.');
+      return Array.from(det.descriptor);
+    }
+
+    async function getDescriptorFromImageElement(img) {
+      const det = await faceapi
+        .detectSingleFace(img)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      if (!det) throw new Error('Nenhum rosto detectado na foto.');
+      return Array.from(det.descriptor);
+    }
+
+    // ====== Webcam: capturar poses ======
+    async function capWebcam(idx) {
+      msg.textContent = 'Processando pose...';
+      try {
+        const d = await getDescriptorFromVideo();
+        wcDescriptors[idx] = d;
+        ok(wcChips[idx]);
+        msg.textContent = 'Pose capturada.';
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+    }
+
+    // ====== Upload: selecionar e pré-visualizar ======
+    fileInput?.addEventListener('change', async (e) => {
+      preview.innerHTML = '';
+      upFiles = Array.from(e.target.files || []).slice(0, MAX_UPLOADS);
+      for (const f of upFiles) {
+        const url = URL.createObjectURL(f);
+        const img = document.createElement('img');
+        img.src = url;
+        img.onload = () => URL.revokeObjectURL(url);
+        preview.appendChild(img);
+      }
+      msg.textContent = upFiles.length ? `Selecionadas ${upFiles.length} foto(s).` : 'Nenhuma foto selecionada.';
+    });
+
+    // ====== Upload: processar fotos (extrair embeddings no browser) ======
+    async function processarUploads() {
+      if (!upFiles.length) { msg.textContent = 'Selecione fotos primeiro.'; return; }
+      msg.textContent = 'Extraindo vetores das fotos...';
+      upDescriptors = [];
+      // usamos <img> para cada File e passamos ao face-api
+      for (const f of upFiles) {
+        const url = URL.createObjectURL(f);
+        const img = document.createElement('img');
+        await new Promise((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = reject;
+          img.src = url;
+        });
+        try {
+          const d = await getDescriptorFromImageElement(img);
+          upDescriptors.push(d);
+        } catch (err) {
+          console.warn('Falhou em uma foto:', err.message);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+      if (!upDescriptors.length) {
+        msg.textContent = 'Nenhum rosto válido nas fotos selecionadas.';
+      } else {
+        msg.textContent = `OK. Extraídos ${upDescriptors.length} vetor(es).`;
+      }
+    }
+
+    // ====== Enviar cadastro (webcam + upload combinados) ======
+    async function enviarCadastro() {
+      const name = nameInput.value.trim();
+      if (!name) { msg.textContent = 'Informe seu nome.'; return; }
+
+      // junta todos os vetores disponíveis
+      const wc = [1,2,3,4,5].map(i => wcDescriptors[i]).filter(Boolean);
+      const payload = [...wc, ...upDescriptors];
+      if (!payload.length) { msg.textContent = 'Capture poses ou processe fotos antes de enviar.'; return; }
+
+      msg.textContent = 'Enviando cadastro...';
+      try {
+        const res = await fetch('/api/enroll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, descriptors: payload })
+        });
+        const json = await res.json();
+        if (json.ok) {
+          msg.textContent = `Cadastro ok: ${json.name} (${json.count} vetor(es)).`;
+        } else {
+          msg.textContent = 'Falha: ' + (json.error || JSON.stringify(json));
+        }
+      } catch (e) {
+        msg.textContent = 'Erro de rede: ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>

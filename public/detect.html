@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>Detector</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+  <style>
+    *{box-sizing:border-box} body{font-family:system-ui,Segoe UI,Arial;margin:0;padding:24px;background:#0f172a;color:#e2e8f0}
+    .card{max-width:880px;margin:auto;background:#0b1220;border:1px solid #1f2a44;border-radius:16px;padding:20px}
+    video{width:720px;max-width:100%;border-radius:12px;border:1px solid #1f2a44;background:#111827}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .badge{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid #334155;background:#111827}
+    input[type=range]{width:220px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Detector de rostos</h1>
+    <div class="row" style="margin:8px 0 12px">
+      <span class="badge">Intervalo: <b id="ivalLabel">1200</b> ms</span>
+      <input id="ival" type="range" min="400" max="3000" step="100" value="1200" />
+      <button id="toggle">Iniciar</button>
+      <span id="status" class="badge">Aguardando…</span>
+    </div>
+    <video id="video" autoplay muted playsinline></video>
+  </div>
+
+  <script>
+    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+    const video = document.getElementById('video');
+    const toggle = document.getElementById('toggle');
+    const statusEl = document.getElementById('status');
+    const ival = document.getElementById('ival');
+    const ivalLabel = document.getElementById('ivalLabel');
+
+    let timer = null;
+
+    async function boot() {
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      video.srcObject = stream;
+      await new Promise(r => video.onloadedmetadata = r);
+    }
+    boot().catch(e => statusEl.textContent = 'Falha ao iniciar: ' + e.message);
+
+    ival.addEventListener('input', () => {
+      ivalLabel.textContent = ival.value;
+      if (timer) { clearInterval(timer); start(); }
+    });
+
+    toggle.addEventListener('click', () => {
+      if (timer) { clearInterval(timer); timer = null; toggle.textContent = 'Iniciar'; statusEl.textContent = 'Pausado.'; }
+      else start();
+    });
+
+    function start() {
+      toggle.textContent = 'Pausar';
+      statusEl.textContent = 'Detectando…';
+      timer = setInterval(cycle, Number(ival.value));
+    }
+
+    async function getDescriptor() {
+      const det = await faceapi
+        .detectSingleFace(video)
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      return det ? Array.from(det.descriptor) : null;
+    }
+
+    async function cycle() {
+      try {
+        const descriptor = await getDescriptor();
+        if (!descriptor) {
+          statusEl.textContent = 'Nenhum rosto no frame.';
+          return;
+        }
+        const res = await fetch('/api/match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ descriptor })
+        });
+        const json = await res.json();
+        if (json.match) statusEl.textContent = `👉 ${json.name} (conf=${json.score})`;
+        else statusEl.textContent = `Desconhecido (melhor conf=${json.score})`;
+      } catch (e) {
+        statusEl.textContent = 'Erro: ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>
